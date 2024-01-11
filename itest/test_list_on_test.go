@@ -255,6 +255,10 @@ var testCases = []*testCase{
 		name: "anchor multiple virtual transactions",
 		test: testAnchorMultipleVirtualTransactions,
 	},
+	{
+		name: "simulate taproot assets channel flow",
+		test: testSimulateTaprootAssetsChannelFlow,
+	},
 }
 
 var optionalTestCases = []*testCase{

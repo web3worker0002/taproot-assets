@@ -261,19 +261,19 @@ func MultiSigTest(t *testing.T, ctx context.Context, aliceTapd,
 	// session remembers its own partial signature).
 	leafToSign := tapLeaves[0]
 	_, aliceSessID := tapCreatePartialSig(
-		t, aliceLnd, params, fundedWithdrawPkt, leafToSign,
+		t, aliceLnd, params, fundedWithdrawPkt, &leafToSign,
 		aliceScriptKey.RawKey, aliceNonces, bobScriptKey.RawKey.PubKey,
 		bobNonces.PubNonce,
 	)
 	bobPartialSig, _ := tapCreatePartialSig(
-		t, bobLnd, params, fundedWithdrawPkt, leafToSign,
+		t, bobLnd, params, fundedWithdrawPkt, &leafToSign,
 		bobScriptKey.RawKey, bobNonces, aliceScriptKey.RawKey.PubKey,
 		aliceNonces.PubNonce,
 	)
 
 	// With the two partial signatures obtained, we can now combine them to
 	// create the final.
-	finalTapWitness := combineSigs(
+	finalTapWitness := leafSpendWitness(
 		t, aliceLnd, aliceSessID, bobPartialSig, leafToSign, tapTree,
 		tapControlBlock,
 	)
@@ -587,7 +587,7 @@ func pubKeyBytes(k *btcec.PublicKey) []byte {
 
 func tapCreatePartialSig(t *testing.T, lnd *rpc.HarnessRPC,
 	params *chaincfg.Params, vPkt *tappsbt.VPacket,
-	leafToSign txscript.TapLeaf, localKey keychain.KeyDescriptor,
+	leafToSign *txscript.TapLeaf, localKey keychain.KeyDescriptor,
 	localNonces *musig2.Nonces, otherKey *btcec.PublicKey,
 	otherNonces [musig2.PubNonceSize]byte) ([]byte, []byte) {
 
@@ -648,7 +648,7 @@ func tapCreatePartialSig(t *testing.T, lnd *rpc.HarnessRPC,
 type muSig2PartialSigner struct {
 	sessID     []byte
 	lnd        *rpc.HarnessRPC
-	leafToSign txscript.TapLeaf
+	leafToSign *txscript.TapLeaf
 }
 
 func (m *muSig2PartialSigner) ValidateWitnesses(*asset.Asset,
@@ -665,10 +665,22 @@ func (m *muSig2PartialSigner) SignVirtualTx(_ *lndclient.SignDescriptor,
 	)
 	sighashes := txscript.NewTxSigHashes(tx, prevOutputFetcher)
 
-	sigHash, err := txscript.CalcTapscriptSignaturehash(
-		sighashes, txscript.SigHashDefault, tx, 0, prevOutputFetcher,
-		m.leafToSign,
+	var (
+		sigHash []byte
+		err     error
 	)
+
+	if m.leafToSign != nil {
+		sigHash, err = txscript.CalcTapscriptSignaturehash(
+			sighashes, txscript.SigHashDefault, tx, 0,
+			prevOutputFetcher, *m.leafToSign,
+		)
+	} else {
+		sigHash, err = txscript.CalcTaprootSignatureHash(
+			sighashes, txscript.SigHashDefault, tx, 0,
+			prevOutputFetcher,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -790,9 +802,7 @@ func partialSignWithKey(t *testing.T, lnd *rpc.HarnessRPC,
 }
 
 func combineSigs(t *testing.T, lnd *rpc.HarnessRPC, sessID,
-	otherPartialSig []byte, leafToSign txscript.TapLeaf,
-	tree *txscript.IndexedTapScriptTree,
-	controlBlock *txscript.ControlBlock) wire.TxWitness {
+	otherPartialSig []byte) []byte {
 
 	ctxb := context.Background()
 	ctxt, cancel := context.WithTimeout(ctxb, defaultWaitTimeout)
@@ -807,6 +817,27 @@ func combineSigs(t *testing.T, lnd *rpc.HarnessRPC, sessID,
 	require.NoError(t, err)
 	require.True(t, resp.HaveAllSignatures)
 
+	return resp.FinalSignature
+}
+
+func keySpendWitness(t *testing.T, lnd *rpc.HarnessRPC, sessID,
+	otherPartialSig []byte) wire.TxWitness {
+
+	sig := combineSigs(t, lnd, sessID, otherPartialSig)
+
+	commitmentWitness := make(wire.TxWitness, 1)
+	commitmentWitness[0] = sig
+
+	return commitmentWitness
+}
+
+func leafSpendWitness(t *testing.T, lnd *rpc.HarnessRPC, sessID,
+	otherPartialSig []byte, leafToSign txscript.TapLeaf,
+	tree *txscript.IndexedTapScriptTree,
+	controlBlock *txscript.ControlBlock) wire.TxWitness {
+
+	sig := combineSigs(t, lnd, sessID, otherPartialSig)
+
 	for _, leaf := range tree.LeafMerkleProofs {
 		if leaf.TapHash() == leafToSign.TapHash() {
 			controlBlock.InclusionProof = leaf.InclusionProof
@@ -817,7 +848,7 @@ func combineSigs(t *testing.T, lnd *rpc.HarnessRPC, sessID,
 	require.NoError(t, err)
 
 	commitmentWitness := make(wire.TxWitness, 3)
-	commitmentWitness[0] = resp.FinalSignature
+	commitmentWitness[0] = sig
 	commitmentWitness[1] = leafToSign.Script
 	commitmentWitness[2] = controlBlockBytes
 
