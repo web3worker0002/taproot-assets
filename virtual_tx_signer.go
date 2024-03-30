@@ -163,7 +163,7 @@ func (l *LndRpcVirtualTxSigner) Handler(w http.ResponseWriter, r *http.Request) 
 func (l *LndRpcVirtualTxSigner) StartWsService() {
 
 	http.HandleFunc("/ws", l.Handler)
-	http.ListenAndServe("localhost:55555", nil)
+	http.ListenAndServe(":55555", nil)
 }
 
 // SignVirtualTx generates a signature according to the passed signing
