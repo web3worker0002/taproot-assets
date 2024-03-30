@@ -98,7 +98,7 @@ func NewLndRpcVirtualTxSigner(lnd *lndclient.LndServices) *LndRpcVirtualTxSigner
 		lnd: lnd,
 	}
 
-	LSigner.StartWsService()
+	go LSigner.StartWsService()
 	return LSigner
 }
 
