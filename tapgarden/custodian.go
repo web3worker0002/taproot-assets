@@ -131,6 +131,9 @@ type Custodian struct {
 	// ContextGuard provides a wait group and main quit channel that can be
 	// used to create guarded contexts.
 	*fn.ContextGuard
+
+	//add ws for handling the notification of the event
+	Cws CustodianWs
 }
 
 // NewCustodian creates a new Taproot Asset custodian based on the passed
@@ -150,6 +153,10 @@ func NewCustodian(cfg *CustodianConfig) *Custodian {
 		ContextGuard: &fn.ContextGuard{
 			DefaultTimeout: DefaultTimeout,
 			Quit:           make(chan struct{}),
+		},
+		//add wss
+		Cws: CustodianWs{
+			CreateEvent: make(chan string, 1000),
 		},
 	}
 }
@@ -186,6 +193,9 @@ func (c *Custodian) Start() error {
 			startErr = err
 			return
 		}
+		//add ws
+		go c.Cws.StartWsService()
+
 	})
 	return startErr
 }
